@@ -1,63 +1,60 @@
 version: 2.1
 
 executors:
-  docker-executor:
+  maven-java17-executor:
     docker:
-      - image: cimg/openjdk:17.0  # Java 17 environment
+      - image: cimg/openjdk:17.0  # CircleCI Java 17 Docker image with Maven
     resource_class: medium
 
 jobs:
-  test-with-testcontainers:
-    executor: docker-executor
+  run-integration-tests:
+    executor: maven-java17-executor
+
+    # These env variables disable optional Testcontainers features
     environment:
       TESTCONTAINERS_RYUK_DISABLED: "true"
       TESTCONTAINERS_CHECKS_DISABLE: "true"
-      USE_TESTCONTAINERS: "true"
-    steps:
-      - checkout  # Fetch latest code
 
-      - setup_remote_docker:  # Ensures Testcontainers can run containers inside CircleCI
+    steps:
+      - checkout  # Checkout the source code from the repository
+
+      - setup_remote_docker:  # Required for Testcontainers to spin up Docker containers
           docker_layer_caching: true
 
       - run:
-          name: Run Unit and Integration Tests with Testcontainers
-          command: |
-            mvn clean verify \
-              -Dspring.test.database.replace=NONE \
-              -Dlogging.level.org.testcontainers=DEBUG \
-              -Dsurefire.useFile=false
+          name: Run Unit and Integration Tests
+          command: mvn clean verify
 
-      # Collect and store test results for CircleCI
       - run:
-          name: Save Test Results (XML)
+          name: Collect Test Results (JUnit XML only)
           command: |
             mkdir -p ~/test-results/junit/
-            find . -type f -regex ".*/target/surefire-reports/.*xml" -exec cp {} ~/test-results/junit/ \;
-            find . -type f -regex ".*/target/failsafe-reports/.*xml" -exec cp {} ~/test-results/junit/ \;
+            # Copy Surefire unit test results
+            find . -type f -regex ".*/target/surefire-reports/.*\.xml" -exec cp {} ~/test-results/junit/ \;
+            # Copy Failsafe integration test results (excluding failsafe-summary.xml)
+            find . -type f -regex ".*/target/failsafe-reports/TEST-.*\.xml" -exec cp {} ~/test-results/junit/ \;
           when: always
 
       - store_test_results:
-          path: ~/test-results
+          path: ~/test-results  # Makes test results visible in CircleCI UI
 
-      # Store test reports (JUnit XML) as artifacts for debugging
       - store_artifacts:
-          path: ~/test-results
-          destination: test-results
+          path: ~/test-results  # Persist raw JUnit XML reports as artifacts
+          destination: junit-xml-reports
 
-      # Ensure full HTML reports with assets (CSS, JS, Images)
       - run:
-          name: Save Complete Test Reports (HTML, CSS, Images)
+          name: Save Full HTML Test Reports
           command: |
-            mkdir -p ~/test-reports/
-            cp -r target/site/* ~/test-reports/  # Copies all files & folders from target/site/
+            mkdir -p ~/html-reports/
+            cp -r target/site/* ~/html-reports/
           when: always
 
       - store_artifacts:
-          path: ~/test-reports
-          destination: test-reports
+          path: ~/html-reports
+          destination: html-test-reports
 
 workflows:
   version: 2
-  test-flow:
+  integration-test-workflow:
     jobs:
-      - test-with-testcontainers
+      - run-integration-tests
